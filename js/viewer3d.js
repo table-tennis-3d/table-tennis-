@@ -614,10 +614,12 @@ export class Viewer3D {
     }
   }
 
-  /** 今の3D画面をPNGで返す */
+  /** 今の3D画面をPNG画像（Blob）で返す */
   snapshot() {
     this.renderer.render(this.scene, this.camera);
-    return this.renderer.domElement.toDataURL('image/png');
+    return new Promise((resolve, reject) => {
+      this.renderer.domElement.toBlob((b) => (b ? resolve(b) : reject(new Error('画像を作れませんでした'))), 'image/png');
+    });
   }
 
   get canvas() { return this.renderer.domElement; }

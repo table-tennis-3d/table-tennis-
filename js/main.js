@@ -5,7 +5,7 @@ import { computeMetrics, findSwings, summarize, CHART_GROUPS, metricCards, SIDE_
 import { TimeChart, valueAt } from './chart.js';
 import { Overlay2D } from './overlay2d.js';
 import { serializeTake, parseTake } from './io.js';
-import { MAX_ANALYZE_SECONDS, RECOMMENDED_SECONDS } from './config.js';
+import { MAX_ANALYZE_SECONDS, RECOMMENDED_SECONDS, MODEL_URLS } from './config.js';
 import { MIRROR_INDEX, N, COLORS } from './landmarks.js';
 
 const $ = (id) => document.getElementById(id);
@@ -90,15 +90,15 @@ const fmtSec = (t) => `${t.toFixed(2)}秒`;
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const baseName = () => (state.name || 'form').replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'form';
 
-function download(blobOrUrl, filename) {
-  const url = typeof blobOrUrl === 'string' ? blobOrUrl : URL.createObjectURL(blobOrUrl);
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  if (typeof blobOrUrl !== 'string') setTimeout(() => URL.revokeObjectURL(url), 30000);
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
 function loadPrefs() {
@@ -346,7 +346,9 @@ els.optModel.addEventListener('change', () => {
 
 // ---------- 解析 ----------
 async function acquireWakeLock() {
-  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { wakeLock = null; }
+  // 埋め込み表示などで許可されていない場合は頼まない（ブラウザが警告を出すため）
+  if (!navigator.wakeLock || document.featurePolicy?.allowsFeature?.('screen-wake-lock') === false) return;
+  try { wakeLock = await navigator.wakeLock.request('screen'); } catch { wakeLock = null; }
 }
 function releaseWakeLock() {
   try { wakeLock?.release(); } catch { /* 無視 */ }
@@ -1064,9 +1066,13 @@ els.btnCompareClear.addEventListener('click', () => {
 });
 
 // ---------- 保存 ----------
-els.btnShot.addEventListener('click', () => {
+els.btnShot.addEventListener('click', async () => {
   if (!viewer) return;
-  download(viewer.snapshot(), `${baseName()}_3d_${player.t.toFixed(2)}s.png`);
+  try {
+    download(await viewer.snapshot(), `${baseName()}_3d_${player.t.toFixed(2)}s.png`);
+  } catch (err) {
+    toast(err.message || '画像を作れませんでした', 'error');
+  }
 });
 
 els.btnExport.addEventListener('click', () => {
@@ -1174,7 +1180,10 @@ function loop(now) {
 }
 
 // ---------- 起動 ----------
+document.body.dataset.state = state.phase;
+for (const opt of [...els.optModel.options]) if (!MODEL_URLS[opt.value]) opt.remove();
 loadPrefs();
+if (!MODEL_URLS[els.optModel.value]) els.optModel.value = 'full';
 syncAllSettings();
 els.btnLoop.setAttribute('aria-pressed', String(player.loop));
 requestAnimationFrame(loop);

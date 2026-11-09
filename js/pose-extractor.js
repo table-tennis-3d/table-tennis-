@@ -1,6 +1,38 @@
 // 動画から1コマずつ姿勢（33点の3D座標）を推定する
-import { MEDIAPIPE_WASM, MODEL_URLS } from './config.js';
+import { MEDIAPIPE_WASM, WASM_SIMD_ONLY, MODEL_URLS, MODEL_FORMAT } from './config.js';
 import { N } from './landmarks.js';
+
+// Base64のテキストで置いたモデルを読み込んでバイト列に戻す（一度読んだら使い回す）
+const modelBuffers = new Map();
+function loadModelBuffer(model) {
+  if (!modelBuffers.has(model)) {
+    const p = fetch(MODEL_URLS[model])
+      .then((r) => {
+        if (!r.ok) throw new Error(`AIモデルを読み込めませんでした（${r.status}）`);
+        return r.text();
+      })
+      .then(decodeBase64)
+      .catch((err) => {
+        modelBuffers.delete(model);
+        throw err;
+      });
+    modelBuffers.set(model, p);
+  }
+  return modelBuffers.get(model);
+}
+
+function decodeBase64(text) {
+  const clean = text.replace(/[^A-Za-z0-9+/=]/g, '');
+  const pad = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+  const out = new Uint8Array((clean.length / 4) * 3 - pad);
+  const CHUNK = 1 << 20; // 4の倍数ずつ区切ってメモリを節約
+  let o = 0;
+  for (let i = 0; i < clean.length; i += CHUNK) {
+    const bin = atob(clean.slice(i, i + CHUNK));
+    for (let k = 0; k < bin.length; k++) out[o++] = bin.charCodeAt(k);
+  }
+  return out;
+}
 
 let visionPromise = null;
 function loadVision() {
@@ -92,9 +124,14 @@ export class PoseExtractor {
     const id = ++this.requestId;
     const task = (async () => {
       const { FilesetResolver, PoseLandmarker } = await loadVision();
-      const fileset = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
+      const fileset = WASM_SIMD_ONLY
+        ? { wasmLoaderPath: `${MEDIAPIPE_WASM}/vision_wasm_internal.js`, wasmBinaryPath: `${MEDIAPIPE_WASM}/vision_wasm_internal.wasm` }
+        : await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
+      const buffer = MODEL_FORMAT === 'base64' ? await loadModelBuffer(model) : null;
       const create = (d) => PoseLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: MODEL_URLS[model], delegate: d },
+        baseOptions: buffer
+          ? { modelAssetBuffer: buffer.slice(), delegate: d }
+          : { modelAssetPath: MODEL_URLS[model], delegate: d },
         runningMode: 'VIDEO',
         numPoses: 1,
         minPoseDetectionConfidence: 0.5,

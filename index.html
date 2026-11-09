@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>フォーム3D</title>
+  <meta name="description" content="自撮りしたスポーツのフォーム動画から、AIが全身の関節を推定して3Dモデルで再生します。動画は端末の中だけで処理されます。">
+  <meta name="theme-color" content="#0e1014">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2314b8a6'/%3E%3Ccircle cx='16' cy='8' r='3' fill='%23fff'/%3E%3Cpath d='M16 12v8m0 0-4 7m4-7 4 7M9 14l7-2 7 2' stroke='%23fff' stroke-width='2.4' stroke-linecap='round' fill='none'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+      "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/vision_bundle.mjs"
+    }
+  }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body data-state="empty">
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="フォーム3D トップへ">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><circle cx="16" cy="8" r="3"/><path d="M16 12v8m0 0-4 7m4-7 4 7M9 14l7-2 7 2"/></svg>
+      <span>フォーム3D</span>
+    </a>
+    <div class="topbar-actions">
+      <button class="btn ghost" id="btnNew" type="button">新しい動画</button>
+      <button class="btn ghost" id="btnHelp" type="button">使い方</button>
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- ① 動画を選ぶ -->
+    <section class="screen screen-empty" id="screenEmpty" aria-labelledby="heroTitle">
+      <div class="hero">
+        <h1 id="heroTitle">フォーム動画を、<br>3Dでぐるっと確認。</h1>
+        <p class="lead">スマホで撮ったスイングや素振りの動画を選ぶと、AIが全身の関節の位置を推定して3Dモデルで再生します。好きな角度から、スローで、何度でも見返せます。</p>
+      </div>
+
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept="video/*" hidden>
+        <svg class="dz-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M12 4v11m0-11-4 4m4-4 4 4"/></svg>
+        <span class="dz-title">動画を選ぶ</span>
+        <span class="dz-sub">またはここにドラッグ＆ドロップ（MP4 / MOV / WebM）</span>
+      </label>
+
+      <p class="privacy">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        動画はこの端末の中だけで処理され、サーバーには送信されません。
+      </p>
+
+      <div class="tips">
+        <h2>うまく3Dにするための撮り方</h2>
+        <ul>
+          <li><b>全身を入れる</b><span>頭から足先までが画面に収まるように。</span></li>
+          <li><b>カメラを固定</b><span>三脚や台に置いて、撮影中は動かさない。</span></li>
+          <li><b>明るい場所で</b><span>ブレを減らすため明るく。60fps撮影がおすすめ。</span></li>
+          <li><b>斜め前か真横から</b><span>腕と体のひねりが見える角度で。</span></li>
+          <li><b>1人だけ映す</b><span>後ろを人が通らない場所で。</span></li>
+          <li><b>短めに</b><span>数回のスイングで5〜15秒くらいが目安。</span></li>
+        </ul>
+      </div>
+
+      <p class="import-line">
+        以前に保存した解析データを開く：
+        <button class="link" id="btnImport" type="button">ファイルを選ぶ（.json）</button>
+        <input type="file" id="importInput" accept=".json,application/json" hidden>
+      </p>
+    </section>
+
+    <!-- ②〜④ 作業画面 -->
+    <section class="screen screen-work" id="screenWork">
+      <div class="stage">
+        <div class="panel viewer-panel" id="viewerPanel">
+          <div class="viewer-canvas" id="viewerCanvas"></div>
+          <div class="viewer-toolbar">
+            <div class="seg seg-scroll" role="group" aria-label="視点">
+              <button type="button" data-view="camera" class="on">撮影視点</button>
+              <button type="button" data-view="front">正面</button>
+              <button type="button" data-view="right">右から</button>
+              <button type="button" data-view="left">左から</button>
+              <button type="button" data-view="back">背面</button>
+              <button type="button" data-view="top">真上</button>
+            </div>
+          </div>
+          <div class="viewer-legend" aria-hidden="true">
+            <span><i class="sw sw-l"></i>左半身</span>
+            <span><i class="sw sw-r"></i>右半身</span>
+            <span class="ghost-legend"><i class="sw sw-g"></i>比較</span>
+          </div>
+          <p class="viewer-hint">ドラッグで回転・ピンチ/ホイールで拡大</p>
+        </div>
+
+        <div class="panel video-panel" id="videoPanel">
+          <div class="video-wrap" id="videoWrap">
+            <video id="video" playsinline muted preload="auto"></video>
+            <canvas id="overlay" aria-hidden="true"></canvas>
+          </div>
+          <div class="novideo-msg" id="noVideo">元の動画はありません（解析データのみ）</div>
+          <div class="processing" id="processing" role="status" aria-live="polite">
+            <div class="proc-head">
+              <span class="spinner" aria-hidden="true"></span>
+              <span id="procStatus">AIモデルを準備しています…</span>
+            </div>
+            <div class="progress"><div class="bar" id="procBar"></div></div>
+            <div class="proc-meta"><span id="procCount"></span><span id="procEta"></span></div>
+            <button class="btn small" id="btnCancel" type="button">中止</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ② 解析前の設定 -->
+      <div class="panel prep" id="prepPanel">
+        <div class="prep-trim">
+          <div class="field-label">解析する範囲 <span class="muted" id="trimLabel"></span></div>
+          <div class="trim-bar" id="trimBar" aria-hidden="true"><div class="trim-range" id="trimRange"></div><div class="trim-head" id="trimHead"></div></div>
+          <div class="trim-buttons">
+            <button class="btn small" id="btnTrimStart" type="button">今の位置を開始に</button>
+            <button class="btn small" id="btnTrimEnd" type="button">今の位置を終了に</button>
+            <button class="link" id="btnTrimReset" type="button">全体に戻す</button>
+          </div>
+          <p class="hint">動画を再生・一時停止して、スイングの少し前〜少し後ろを範囲にすると速く正確になります。</p>
+        </div>
+        <div class="prep-settings">
+          <div class="field">
+            <div class="field-label">利き手（ラケット・バットを持つ手）</div>
+            <div class="seg" role="radiogroup" aria-label="利き手">
+              <label><input type="radio" name="hand-prep" value="right" data-setting="handedness" checked><span>右</span></label>
+              <label><input type="radio" name="hand-prep" value="left" data-setting="handedness"><span>左</span></label>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-label">解析の精度</div>
+            <select id="optModel">
+              <option value="lite">速い</option>
+              <option value="full" selected>標準（おすすめ）</option>
+              <option value="heavy">高精度（初回のみ約30MBを読み込み）</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="field-label">1秒あたりの解析コマ数</div>
+            <select id="optFps">
+              <option value="15">15コマ（速い）</option>
+              <option value="30" selected>30コマ（標準）</option>
+              <option value="60">60コマ（速い動きを細かく）</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="field-label">スローモーション動画</div>
+            <select data-setting="timeScale" id="optSlowPrep">
+              <option value="1" selected>通常の速さ</option>
+              <option value="0.5">1/2スロー</option>
+              <option value="0.25">1/4スロー</option>
+              <option value="0.125">1/8スロー</option>
+            </select>
+          </div>
+          <label class="check field">
+            <input type="checkbox" data-setting="mirror">
+            <span>左右反転している動画（インカメラで自撮りした など）</span>
+          </label>
+        </div>
+        <div class="prep-actions">
+          <button class="btn primary big" id="btnAnalyze" type="button">3Dモデルを作る</button>
+          <p class="hint" id="modelStatus"></p>
+        </div>
+      </div>
+
+      <!-- ③ 再生コントロール -->
+      <div class="panel transport" id="transport">
+        <div class="transport-buttons">
+          <button class="icon-btn" id="btnPrev" type="button" aria-label="1コマ戻る" title="1コマ戻る（←）">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14M18 6l-8 6 8 6z"/></svg>
+          </button>
+          <button class="icon-btn play" id="btnPlay" type="button" aria-label="再生" title="再生／一時停止（スペース）">
+            <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+            <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
+          </button>
+          <button class="icon-btn" id="btnNext" type="button" aria-label="1コマ進む" title="1コマ進む（→）">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 5v14M6 6l8 6-8 6z"/></svg>
+          </button>
+        </div>
+        <div class="timeline">
+          <div class="timeline-track" id="timelineTrack" aria-hidden="true"></div>
+          <input type="range" id="timeline" min="0" max="1" step="0.001" value="0" aria-label="再生位置">
+          <div class="timeline-marks" id="timelineMarks" aria-hidden="true"></div>
+        </div>
+        <div class="transport-right">
+          <span class="time" id="timeLabel">0.00秒</span>
+          <select id="speed" aria-label="再生速度">
+            <option value="0.1">0.1倍</option>
+            <option value="0.25">0.25倍</option>
+            <option value="0.5" selected>0.5倍</option>
+            <option value="1">1倍</option>
+          </select>
+          <button class="toggle" id="btnLoop" type="button" aria-pressed="true" title="ループ再生">ループ</button>
+        </div>
+      </div>
+
+      <!-- ④ 分析 -->
+      <div class="dash" id="dash">
+        <section class="card card-metrics">
+          <header class="card-head">
+            <h2>この瞬間の数値</h2>
+            <span class="muted" id="metricsTime"></span>
+          </header>
+          <div class="metric-grid" id="metricGrid"></div>
+          <p class="footnote">角度は3Dモデルから計算した目安です。カメラに対して奥行き方向の動きは誤差が大きくなります。</p>
+        </section>
+
+        <section class="card card-swings">
+          <header class="card-head">
+            <h2>スイングの山場</h2>
+            <span class="muted">手首がいちばん速い瞬間</span>
+          </header>
+          <div id="swingList" class="swing-list"></div>
+          <dl class="summary" id="summary"></dl>
+        </section>
+
+        <section class="card card-charts">
+          <header class="card-head">
+            <h2>グラフ</h2>
+            <span class="muted">タップでその瞬間へ移動</span>
+          </header>
+          <div class="chips" id="chartChips" role="group" aria-label="表示するグラフ"></div>
+          <div class="charts" id="charts"></div>
+        </section>
+
+        <section class="card card-settings">
+          <header class="card-head"><h2>表示と補正</h2></header>
+          <div class="settings-grid">
+            <div class="field">
+              <div class="field-label">利き手</div>
+              <div class="seg" role="radiogroup" aria-label="利き手">
+                <label><input type="radio" name="hand-view" value="right" data-setting="handedness" checked><span>右</span></label>
+                <label><input type="radio" name="hand-view" value="left" data-setting="handedness"><span>左</span></label>
+              </div>
+            </div>
+            <div class="field">
+              <div class="field-label">表示</div>
+              <div class="seg" role="radiogroup" aria-label="3Dの表示">
+                <label><input type="radio" name="mode" value="mannequin" data-setting="mode" checked><span>人形</span></label>
+                <label><input type="radio" name="mode" value="skeleton" data-setting="mode"><span>骨格</span></label>
+              </div>
+            </div>
+            <div class="field">
+              <div class="field-label">なめらかさ（ブレ補正）</div>
+              <div class="seg" role="radiogroup" aria-label="なめらかさ">
+                <label><input type="radio" name="smooth" value="0" data-setting="smoothing"><span>なし</span></label>
+                <label><input type="radio" name="smooth" value="1" data-setting="smoothing"><span>弱</span></label>
+                <label><input type="radio" name="smooth" value="2" data-setting="smoothing" checked><span>中</span></label>
+                <label><input type="radio" name="smooth" value="3" data-setting="smoothing"><span>強</span></label>
+              </div>
+            </div>
+            <div class="field">
+              <div class="field-label">スローモーション動画</div>
+              <select data-setting="timeScale" id="optSlowView">
+                <option value="1" selected>通常の速さ</option>
+                <option value="0.5">1/2スロー</option>
+                <option value="0.25">1/4スロー</option>
+                <option value="0.125">1/8スロー</option>
+              </select>
+            </div>
+            <label class="check"><input type="checkbox" data-setting="trail" checked><span>利き手の軌跡を表示</span></label>
+            <label class="check"><input type="checkbox" data-setting="floor" checked><span>足を床に接地させる</span></label>
+            <label class="check"><input type="checkbox" data-setting="mirror"><span>左右反転している動画</span></label>
+            <label class="check"><input type="checkbox" data-setting="overlay" checked><span>元動画に骨格を重ねる</span></label>
+          </div>
+        </section>
+
+        <section class="card card-compare">
+          <header class="card-head">
+            <h2>比較</h2>
+            <span class="muted">お手本や前回のフォームと重ねる</span>
+          </header>
+          <div class="compare-empty" id="compareEmpty">
+            <p>別の動画、または保存した解析データを読み込むと、半透明の人形で重ねて表示します。スイングの山場で自動的にタイミングを合わせます。</p>
+            <div class="row">
+              <button class="btn" id="btnCompareVideo" type="button">比較する動画を選ぶ</button>
+              <button class="btn" id="btnCompareJson" type="button">解析データ（.json）を選ぶ</button>
+            </div>
+            <input type="file" id="compareVideoInput" accept="video/*" hidden>
+            <input type="file" id="compareJsonInput" accept=".json,application/json" hidden>
+            <p class="hint" id="compareStatus"></p>
+          </div>
+          <div class="compare-active" id="compareActive">
+            <div class="compare-name"><i class="sw sw-g"></i><span id="compareName"></span></div>
+            <div class="field">
+              <div class="field-label">タイミングのずれ <span class="muted" id="compareOffsetLabel">0.00秒</span></div>
+              <input type="range" id="compareOffset" min="-2" max="2" step="0.01" value="0" aria-label="比較のタイミング">
+            </div>
+            <div class="seg" role="radiogroup" aria-label="比較の並べ方">
+              <label><input type="radio" name="cmpLayout" value="overlay" checked><span>重ねる</span></label>
+              <label><input type="radio" name="cmpLayout" value="side"><span>横に並べる</span></label>
+            </div>
+            <label class="check"><input type="checkbox" id="compareMirror"><span>比較を左右反転（利き手が逆の人と比べる）</span></label>
+            <div class="row">
+              <button class="btn small" id="btnCompareAlign" type="button">今のスイングの山場で合わせる</button>
+              <button class="btn small" id="btnCompareClear" type="button">比較をやめる</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card card-export">
+          <header class="card-head"><h2>保存</h2></header>
+          <div class="row">
+            <button class="btn" id="btnShot" type="button">3Dを画像で保存</button>
+            <button class="btn" id="btnRecord" type="button">3Dを動画で保存</button>
+            <button class="btn" id="btnExport" type="button">解析データを保存（.json）</button>
+          </div>
+          <p class="hint">解析データを保存しておくと、あとで再解析せずに開いたり、比較に使えます。</p>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="helpDialog" aria-labelledby="helpTitle">
+    <form method="dialog" class="dialog-inner">
+      <header class="dialog-head">
+        <h2 id="helpTitle">使い方</h2>
+        <button class="icon-btn" value="close" aria-label="閉じる"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </header>
+      <ol class="steps">
+        <li><b>撮る</b> カメラを固定して、全身が映るように撮影します。明るい場所で、できれば60fpsで。</li>
+        <li><b>選ぶ</b> 動画を選んで、解析する範囲（スイングの前後）を決めます。</li>
+        <li><b>作る</b> 「3Dモデルを作る」を押すと、1コマずつAIが関節の位置を推定します。10秒の動画で数十秒〜1分ほどかかります。</li>
+        <li><b>見る</b> 3D画面をドラッグで回転、ピンチやホイールで拡大、2本指や右ドラッグで移動できます。視点ボタンで正面・横・真上にすぐ切り替えられます。</li>
+      </ol>
+      <h3>キーボード操作</h3>
+      <p>スペース：再生／一時停止　←／→：1コマ移動</p>
+      <h3>知っておいてほしいこと</h3>
+      <ul class="caveats">
+        <li>1台のカメラの映像から3Dを<b>推定</b>しているため、カメラに対して前後（奥行き）方向は誤差が大きめです。</li>
+        <li>ラケット・バット・ボールは追跡しません。体の33か所の点から人形を動かしています。</li>
+        <li>動きが速すぎてブレたコマは、前後のコマから補間されます。</li>
+        <li>角度や速さは目安です。同じ撮り方で撮った動画どうしで比べると、変化が分かりやすくなります。</li>
+        <li>動画は端末の中だけで処理されます。AIモデルとプログラムはインターネットから読み込みます。</li>
+      </ul>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
